@@ -1,0 +1,84 @@
+---
+title: "EDA"
+output: pdf_document
+date: "2024-05-07"
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+library(data.table)
+library(ggplot2)
+library(psych)
+library(readr)
+```
+
+```{r loaddf, include=FALSE}
+scaling <- read_csv("../data/scaling.csv",
+                    col_types = cols(d_model = col_integer(),
+                                     num_layers = col_integer(),
+                                     num_heads = col_integer(),
+                                     batch_size = col_integer(),
+                                     learning_rate = col_double()))
+df = data.table(scaling)
+df[,log10_train_flops:=log10(train_flops)]
+df[,log10_loss:=log10(loss)]
+
+df = df[, .SD, .SDcols = !c("train_flops", "loss")]
+```
+
+## cor plots
+We first query select some data with training_flops less then 1e16, which corresponds to 23.6% of total budget. Let's look at the correlation plots. 
+```{r cars}
+pairs.panels(df,
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE # show correlation ellipses
+)
+```
+
+As expected, training flops is the biggest contributor.
+
+## argmin cor
+Let's take the argmin over all hyperparameters for each training flops, see what the result look like.
+
+```{r argmin}
+# Function to find the row with the smallest loss for each unique log10_train_flops
+get_min_loss_per_flop = function(df) {
+  # Find unique values of log10_train_flops
+  unique_flops = unique(df$log10_train_flops)
+  
+  # Initialize an empty data.table to store results
+  result = data.table()
+
+  # Iterate over each unique log10_train_flops value
+  for (flop in unique_flops) {
+    # Subset the data.table for the current log10_train_flops
+    subset_dt = df[log10_train_flops == flop]
+    
+    # Find the row with the smallest loss within the subset
+    min_loss_row = subset_dt[which.min(log10_loss)]
+    
+    # Bind the row with the smallest loss to the result data.table
+    result = rbind(result, min_loss_row)
+  }
+
+  return(result)
+}
+
+# Assuming df is your data.table
+argmin_df = get_min_loss_per_flop(df)
+argmin_df
+```
+We observe the model consistently favors small batch_size, large learning rate, and small d_model.
+
+```{r argmin cor, warning=FALSE}
+pairs.panels(argmin_df,
+             method = "pearson", # correlation method
+             hist.col = "#00AFBB",
+             density = TRUE,  # show density plots
+             ellipses = TRUE # show correlation ellipses
+)
+```
+
+As we can see, `loss ~ train_flops` follows an almost perfect line.
